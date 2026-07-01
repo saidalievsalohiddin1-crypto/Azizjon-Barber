@@ -207,6 +207,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const phoneInput = document.getElementById('login-phone');
     const loginBtn = document.getElementById('btn-login');
     const loginNameInput = document.getElementById('login-name');
+    const loginSurnameInput = document.getElementById('login-surname');
     const welcomeText = document.getElementById('welcome-text');
     const userAvatar = document.getElementById('user-avatar');
     const themeBtn = document.getElementById('theme-btn');
@@ -387,26 +388,33 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- FUNKSIYALAR ---
     
-    // Toast xabarnoma
+    // Dynamic Island xabarnoma (iOS 26 Style)
     function showToast(message, type = 'info') {
-        toast.textContent = message;
-        toast.className = 'toast';
-        toast.classList.add('show');
+        const di = document.getElementById('dynamic-island');
+        const diIcon = document.getElementById('di-icon');
+        const diText = document.getElementById('di-text');
         
-        // Toast gradients
-        if (type === 'success') {
-            toast.style.background = 'linear-gradient(135deg, #10b981, #059669)';
-        } else if (type === 'error') {
-            toast.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)';
-        } else if (type === 'warning') {
-            toast.style.background = 'linear-gradient(135deg, #f59e0b, #d97706)';
-        } else {
-            toast.style.background = 'linear-gradient(135deg, #4f46e5, #4338ca)';
-        }
+        if (!di || !diIcon || !diText) return;
         
-        setTimeout(() => {
-            toast.classList.remove('show');
-        }, 3000);
+        // Set content and type
+        diIcon.className = 'di-icon ' + type;
+        diText.textContent = message;
+        
+        if (type === 'success') diIcon.innerHTML = '✓';
+        else if (type === 'error') diIcon.innerHTML = '✕';
+        else if (type === 'warning') diIcon.innerHTML = '!';
+        else diIcon.innerHTML = 'i';
+        
+        // Trigger animation
+        di.classList.remove('expanded');
+        // Force reflow
+        void di.offsetWidth;
+        di.classList.add('expanded');
+        
+        if (window.diTimeout) clearTimeout(window.diTimeout);
+        window.diTimeout = setTimeout(() => {
+            di.classList.remove('expanded');
+        }, 3500);
     }
     
     // Statistikani yangilash
@@ -444,10 +452,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     
     // Ro'yxatni chizish
-    function renderDebtsList(debts = database) {
+    function renderDebtsList(debts = database, isSkeleton = false) {
         titlesList.innerHTML = '';
         const lang = localStorage.getItem('language') || 'uz';
         
+        if (isSkeleton) {
+            viewSummary.classList.remove('show');
+            for(let i=0; i<4; i++) {
+                titlesList.innerHTML += `
+                <div class="skeleton-card skeleton">
+                    <div class="skeleton-badge skeleton"></div>
+                    <div class="skeleton-details">
+                        <div class="skeleton-line long skeleton"></div>
+                        <div class="skeleton-line short skeleton"></div>
+                    </div>
+                    <div class="skeleton-btn skeleton"></div>
+                </div>`;
+            }
+            return;
+        }
+
         if (debts.length === 0) {
             titlesList.innerHTML = `
                 <div class="empty-state">
@@ -953,6 +977,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Kirish
     loginBtn.addEventListener('click', () => {
         const name = loginNameInput.value.trim();
+        const surname = loginSurnameInput ? loginSurnameInput.value.trim() : '';
         const phone = phoneInput.value.trim();
         const lang = localStorage.getItem('language') || 'uz';
         
@@ -972,6 +997,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         currentUser = { 
             name, 
+            surname,
             phone,
             loginTime: new Date().toISOString()
         };
@@ -981,11 +1007,7 @@ document.addEventListener("DOMContentLoaded", () => {
         welcomeText.textContent = name;
         userAvatar.textContent = name.substring(0, 2).toUpperCase();
         
-        updateStats();
-        switchScreen('screen-menu');
-        
-        const welcomeToast = translations[lang].toastLoggedIn.replace('{name}', name);
-        showToast(welcomeToast, "success");
+        checkPinStatus();
     });
     
     // Qarz qo'shish
@@ -1120,14 +1142,23 @@ document.addEventListener("DOMContentLoaded", () => {
         
         if (screenId === 'screen-view') {
             monthsSidebar.style.display = 'flex';
-            renderDebtsList(getFilteredDebts());
+            // Show skeleton loader
+            renderDebtsList(getFilteredDebts(), true);
+            setTimeout(() => {
+                renderDebtsList(getFilteredDebts(), false);
+            }, 600); // 600ms fake load
         } else {
             monthsSidebar.style.display = 'none';
         }
         
         if (screenId === 'screen-stats') {
-            drawChart();
-            updateStatsAndActivity();
+            // Skeleton for stats
+            document.getElementById('stat-average').innerHTML = '<div class="skeleton skeleton-line" style="height:20px; width:100px; margin-top:5px;"></div>';
+            document.getElementById('stat-max').innerHTML = '<div class="skeleton skeleton-line" style="height:20px; width:100px; margin-top:5px;"></div>';
+            setTimeout(() => {
+                drawChart();
+                updateStatsAndActivity();
+            }, 500);
         } else if (screenId === 'screen-menu') {
             updateStats();
         }
@@ -1294,7 +1325,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- INITIALIZATION ---
     
     // Tema ni yuklash
-    const savedTheme = localStorage.getItem('theme') || 'light';
+    const savedTheme = localStorage.getItem('theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
     
     if (savedTheme === 'dark') {
@@ -1315,18 +1346,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const savedAutosave = localStorage.getItem('autosave_enabled') !== 'false';
     document.getElementById('autosave-toggle').checked = savedAutosave;
 
-    // Foydalanuvchi ma'lumotlarini yuklash
-    const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
-        try {
-            currentUser = JSON.parse(savedUser);
-            welcomeText.textContent = currentUser.name;
-            userAvatar.textContent = currentUser.name.substring(0, 2).toUpperCase();
-            switchScreen('screen-menu');
-        } catch (e) {
-            localStorage.removeItem('currentUser');
-        }
-    }
+    // Foydalanuvchi ma'lumotlarini yuklash qismi eng pastga (funksiyalar e'lon qilingandan so'ng) ko'chirildi
     
     // Dastlabki statistikani ko'rsatish
     updateStats();
@@ -1356,5 +1376,176 @@ document.addEventListener("DOMContentLoaded", () => {
     // PWA uchun
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js').catch(console.error);
+    }
+    
+    // --- VIP SUPPORT ---
+    const vipSupportBtn = document.getElementById('btn-vip-support');
+    if (vipSupportBtn) {
+        vipSupportBtn.addEventListener('click', () => switchScreen('screen-vip-support'));
+    }
+    const backToLoginBtn = document.getElementById('back-to-login');
+    if (backToLoginBtn) {
+        backToLoginBtn.addEventListener('click', () => switchScreen('screen-login'));
+    }
+
+    // --- PIN LOCK LOGIC ---
+    let currentPin = '';
+    let isSettingPin = false;
+    let confirmPin = '';
+    let failedPinAttempts = parseInt(localStorage.getItem('pin_fails')) || 0;
+    let pinPenaltyEndTime = parseInt(localStorage.getItem('pin_penalty_end')) || 0;
+
+    function checkPinStatus() {
+        const savedPin = localStorage.getItem('app_pin');
+        if (savedPin) {
+            isSettingPin = false;
+            document.getElementById('pin-title').textContent = "PIN kodni kiriting";
+            document.getElementById('pin-subtitle').textContent = "Ilovaga kirish uchun";
+        } else {
+            isSettingPin = true;
+            document.getElementById('pin-title').textContent = "PIN kodni o'rnating";
+            document.getElementById('pin-subtitle').textContent = "Xavfsizlik uchun 4 xonali kod";
+        }
+        currentPin = '';
+        confirmPin = '';
+        updatePinDots();
+        checkPinPenalty();
+        switchScreen('screen-pin');
+    }
+
+    function checkPinPenalty() {
+        const now = Date.now();
+        const timerEl = document.getElementById('pin-timer');
+        const dotsEl = document.getElementById('pin-dots');
+        const numpad = document.querySelector('.numpad');
+        
+        if (pinPenaltyEndTime > now) {
+            timerEl.style.display = 'block';
+            dotsEl.style.display = 'none';
+            numpad.style.pointerEvents = 'none';
+            numpad.style.opacity = '0.5';
+            
+            const interval = setInterval(() => {
+                const remaining = Math.ceil((pinPenaltyEndTime - Date.now()) / 1000);
+                if (remaining <= 0) {
+                    clearInterval(interval);
+                    timerEl.style.display = 'none';
+                    dotsEl.style.display = 'flex';
+                    numpad.style.pointerEvents = 'auto';
+                    numpad.style.opacity = '1';
+                    failedPinAttempts = 0;
+                    localStorage.setItem('pin_fails', 0);
+                } else {
+                    document.getElementById('penalty-time').textContent = remaining;
+                }
+            }, 1000);
+        } else {
+            timerEl.style.display = 'none';
+            dotsEl.style.display = 'flex';
+            numpad.style.pointerEvents = 'auto';
+            numpad.style.opacity = '1';
+        }
+    }
+
+    function updatePinDots() {
+        const dots = document.querySelectorAll('.pin-dots .dot');
+        dots.forEach((dot, index) => {
+            if (index < currentPin.length) {
+                dot.classList.add('filled');
+            } else {
+                dot.classList.remove('filled');
+            }
+        });
+    }
+
+    document.querySelectorAll('.num-key').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const num = e.currentTarget.getAttribute('data-num');
+            const action = e.currentTarget.getAttribute('data-action');
+            
+            if (action === 'clear') {
+                currentPin = '';
+            } else if (action === 'backspace') {
+                currentPin = currentPin.slice(0, -1);
+            } else if (num && currentPin.length < 4) {
+                currentPin += num;
+            }
+            
+            updatePinDots();
+            
+            if (currentPin.length === 4) {
+                setTimeout(() => handlePinSubmit(), 50);
+            }
+        });
+    });
+
+    function handlePinSubmit() {
+        const dotsEl = document.getElementById('pin-dots');
+        if (isSettingPin) {
+            if (!confirmPin) {
+                confirmPin = currentPin;
+                currentPin = '';
+                document.getElementById('pin-title').textContent = "PIN ni tasdiqlang";
+                updatePinDots();
+            } else {
+                if (confirmPin === currentPin) {
+                    localStorage.setItem('app_pin', currentPin);
+                    showToast("PIN kod o'rnatildi!", "success");
+                    updateStats();
+                    switchScreen('screen-menu');
+                    const lang = localStorage.getItem('language') || 'uz';
+                    const welcomeToast = translations[lang].toastLoggedIn.replace('{name}', currentUser.name);
+                    showToast(welcomeToast, "success");
+                } else {
+                    dotsEl.classList.add('error');
+                    setTimeout(() => dotsEl.classList.remove('error'), 400);
+                    showToast("PIN kodlar mos tushmadi!", "error");
+                    confirmPin = '';
+                    currentPin = '';
+                    document.getElementById('pin-title').textContent = "PIN kodni o'rnating";
+                    updatePinDots();
+                }
+            }
+        } else {
+            const savedPin = localStorage.getItem('app_pin');
+            if (currentPin === savedPin) {
+                failedPinAttempts = 0;
+                localStorage.setItem('pin_fails', 0);
+                updateStats();
+                switchScreen('screen-menu');
+                const lang = localStorage.getItem('language') || 'uz';
+                const welcomeToast = translations[lang].toastLoggedIn.replace('{name}', currentUser.name);
+                showToast(welcomeToast, "success");
+            } else {
+                failedPinAttempts++;
+                localStorage.setItem('pin_fails', failedPinAttempts);
+                dotsEl.classList.add('error');
+                setTimeout(() => dotsEl.classList.remove('error'), 400);
+                
+                if (failedPinAttempts >= 5) {
+                    pinPenaltyEndTime = Date.now() + 45000; // 45 seconds
+                    localStorage.setItem('pin_penalty_end', pinPenaltyEndTime);
+                    showToast("Ko'p xato! 45 soniya kuting.", "error");
+                    checkPinPenalty();
+                } else {
+                    showToast(`Xato PIN! Qolgan urinishlar: ${5 - failedPinAttempts}`, "error");
+                }
+                currentPin = '';
+                updatePinDots();
+            }
+        }
+    }
+
+    // Foydalanuvchi ma'lumotlarini yuklash (Endi barcha funksiyalar va o'zgaruvchilar e'lon qilingan)
+    const savedUser = localStorage.getItem('currentUser');
+    if (savedUser) {
+        try {
+            currentUser = JSON.parse(savedUser);
+            welcomeText.textContent = currentUser.name;
+            userAvatar.textContent = currentUser.name.substring(0, 2).toUpperCase();
+            checkPinStatus();
+        } catch (e) {
+            localStorage.removeItem('currentUser');
+        }
     }
 });
