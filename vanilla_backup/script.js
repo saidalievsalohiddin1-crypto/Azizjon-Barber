@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- STATE VA STORAGE ---
     let currentMonthFilter = 'all';
     let currentUser = null;
+    let appUsers = JSON.parse(localStorage.getItem('app_users')) || {};
     let database = JSON.parse(localStorage.getItem('pro_debts')) || [];
     let activeCurrency = localStorage.getItem('currency') || 'UZS';
     let statsChart = null;
@@ -995,19 +996,21 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
         
+        const userKey = phone.replace(/\D/g, '');
+        
         currentUser = { 
             name, 
             surname,
             phone,
+            userKey,
             loginTime: new Date().toISOString()
         };
-        
-        localStorage.setItem('currentUser', JSON.stringify(currentUser));
         
         welcomeText.textContent = name;
         userAvatar.textContent = name.substring(0, 2).toUpperCase();
         
-        checkPinStatus();
+        const isExistingUser = !!appUsers[userKey];
+        checkPinStatus(isExistingUser, isExistingUser ? appUsers[userKey].pin : null);
     });
     
     // Qarz qo'shish
@@ -1125,7 +1128,7 @@ document.addEventListener("DOMContentLoaded", () => {
         targetScreen.classList.add('slide-in');
         
         const bottomNav = document.getElementById('bottom-nav');
-        if (screenId === 'screen-login') {
+        if (screenId === 'screen-login' || screenId === 'screen-pin') {
             bottomNav.style.display = 'none';
         } else {
             bottomNav.style.display = 'flex';
@@ -1391,20 +1394,26 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- PIN LOCK LOGIC ---
     let currentPin = '';
     let isSettingPin = false;
+    let isChangingPinOld = false;
+    let isChangingPinNew = false;
+    let targetPin = null;
     let confirmPin = '';
     let failedPinAttempts = parseInt(localStorage.getItem('pin_fails')) || 0;
     let pinPenaltyEndTime = parseInt(localStorage.getItem('pin_penalty_end')) || 0;
 
-    function checkPinStatus() {
-        const savedPin = localStorage.getItem('app_pin');
-        if (savedPin) {
+    function checkPinStatus(existingUser = false, savedPin = null) {
+        targetPin = savedPin;
+        isChangingPinOld = false;
+        isChangingPinNew = false;
+        
+        if (existingUser && savedPin) {
             isSettingPin = false;
             document.getElementById('pin-title').textContent = "PIN kodni kiriting";
             document.getElementById('pin-subtitle').textContent = "Ilovaga kirish uchun";
         } else {
             isSettingPin = true;
             document.getElementById('pin-title').textContent = "PIN kodni o'rnating";
-            document.getElementById('pin-subtitle').textContent = "Xavfsizlik uchun 4 xonali kod";
+            document.getElementById('pin-subtitle').textContent = "Yangi hisob uchun 4 xonali kod";
         }
         currentPin = '';
         confirmPin = '';
@@ -1481,6 +1490,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function handlePinSubmit() {
         const dotsEl = document.getElementById('pin-dots');
+        
+        if (isChangingPinOld) {
+            if (currentPin === targetPin) {
+                isChangingPinOld = false;
+                isChangingPinNew = true;
+                isSettingPin = true;
+                currentPin = '';
+                confirmPin = '';
+                document.getElementById('pin-title').textContent = "Yangi PIN kodni kiriting";
+                updatePinDots();
+                showToast("Eski PIN to'g'ri", "success");
+            } else {
+                dotsEl.classList.add('error');
+                setTimeout(() => dotsEl.classList.remove('error'), 400);
+                showToast("Eski PIN noto'g'ri!", "error");
+                currentPin = '';
+                updatePinDots();
+            }
+            return;
+        }
+
         if (isSettingPin) {
             if (!confirmPin) {
                 confirmPin = currentPin;
@@ -1489,28 +1519,45 @@ document.addEventListener("DOMContentLoaded", () => {
                 updatePinDots();
             } else {
                 if (confirmPin === currentPin) {
-                    localStorage.setItem('app_pin', currentPin);
-                    showToast("PIN kod o'rnatildi!", "success");
-                    updateStats();
-                    switchScreen('screen-menu');
-                    const lang = localStorage.getItem('language') || 'uz';
-                    const welcomeToast = translations[lang].toastLoggedIn.replace('{name}', currentUser.name);
-                    showToast(welcomeToast, "success");
+                    appUsers[currentUser.userKey] = {
+                        name: currentUser.name,
+                        surname: currentUser.surname,
+                        phone: currentUser.phone,
+                        pin: currentPin
+                    };
+                    localStorage.setItem('app_users', JSON.stringify(appUsers));
+                    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                    
+                    showToast(isChangingPinNew ? "PIN kod o'zgartirildi!" : "PIN kod o'rnatildi!", "success");
+                    
+                    if (isChangingPinNew) {
+                        isChangingPinNew = false;
+                        switchScreen('screen-settings');
+                    } else {
+                        checkAdminAccess();
+                        updateStats();
+                        switchScreen('screen-menu');
+                        const lang = localStorage.getItem('language') || 'uz';
+                        const welcomeToast = translations[lang].toastLoggedIn.replace('{name}', currentUser.name);
+                        showToast(welcomeToast, "success");
+                    }
                 } else {
                     dotsEl.classList.add('error');
                     setTimeout(() => dotsEl.classList.remove('error'), 400);
                     showToast("PIN kodlar mos tushmadi!", "error");
                     confirmPin = '';
                     currentPin = '';
-                    document.getElementById('pin-title').textContent = "PIN kodni o'rnating";
+                    document.getElementById('pin-title').textContent = isChangingPinNew ? "Yangi PIN kodni kiriting" : "PIN kodni o'rnating";
                     updatePinDots();
                 }
             }
         } else {
-            const savedPin = localStorage.getItem('app_pin');
-            if (currentPin === savedPin) {
+            if (currentPin === targetPin) {
                 failedPinAttempts = 0;
                 localStorage.setItem('pin_fails', 0);
+                localStorage.setItem('currentUser', JSON.stringify(currentUser));
+                
+                checkAdminAccess();
                 updateStats();
                 switchScreen('screen-menu');
                 const lang = localStorage.getItem('language') || 'uz';
@@ -1523,7 +1570,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 setTimeout(() => dotsEl.classList.remove('error'), 400);
                 
                 if (failedPinAttempts >= 5) {
-                    pinPenaltyEndTime = Date.now() + 45000; // 45 seconds
+                    pinPenaltyEndTime = Date.now() + 45000;
                     localStorage.setItem('pin_penalty_end', pinPenaltyEndTime);
                     showToast("Ko'p xato! 45 soniya kuting.", "error");
                     checkPinPenalty();
@@ -1535,15 +1582,72 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
     }
+    
+    function checkAdminAccess() {
+        const adminBtn = document.getElementById('admin-panel-group');
+        if (!adminBtn) return;
+        
+        if (currentUser && currentUser.name.toLowerCase() === 'admin' && currentUser.surname.toLowerCase() === 'saidaliev') {
+            adminBtn.style.display = 'block';
+        } else {
+            adminBtn.style.display = 'none';
+        }
+    }
 
-    // Foydalanuvchi ma'lumotlarini yuklash (Endi barcha funksiyalar va o'zgaruvchilar e'lon qilingan)
+    const btnChangePin = document.getElementById('btn-change-pin');
+    if (btnChangePin) {
+        btnChangePin.addEventListener('click', () => {
+            if (!currentUser || !appUsers[currentUser.userKey]) return;
+            
+            targetPin = appUsers[currentUser.userKey].pin;
+            isChangingPinOld = true;
+            isSettingPin = false;
+            isChangingPinNew = false;
+            
+            document.getElementById('pin-title').textContent = "Eski PIN kodni kiriting";
+            document.getElementById('pin-subtitle').textContent = "Xavfsizlikni tasdiqlash uchun";
+            currentPin = '';
+            confirmPin = '';
+            updatePinDots();
+            switchScreen('screen-pin');
+        });
+    }
+    
+    const btnLogout = document.getElementById('logout-btn');
+    if (btnLogout) {
+        btnLogout.addEventListener('click', () => {
+            currentUser = null;
+            localStorage.removeItem('currentUser');
+            loginNameInput.value = '';
+            if (loginSurnameInput) loginSurnameInput.value = '';
+            phoneInput.value = '+998 ';
+            
+            switchScreen('screen-login');
+            
+            const lang = localStorage.getItem('language') || 'uz';
+            showToast(lang === 'uz' ? "Hisobdan chiqildi" : (lang === 'ru' ? "Вы вышли из системы" : "Logged out"), "success");
+        });
+    }
+    
+    const adminPanelBtn = document.getElementById('btn-admin-panel');
+    if (adminPanelBtn) {
+        adminPanelBtn.addEventListener('click', () => {
+            showToast("Admin Panel ochilmoqda!", "success");
+        });
+    }
+
+    // Foydalanuvchi ma'lumotlarini yuklash
     const savedUser = localStorage.getItem('currentUser');
     if (savedUser) {
         try {
             currentUser = JSON.parse(savedUser);
+            appUsers = JSON.parse(localStorage.getItem('app_users')) || {};
+            
             welcomeText.textContent = currentUser.name;
             userAvatar.textContent = currentUser.name.substring(0, 2).toUpperCase();
-            checkPinStatus();
+            
+            const isExistingUser = !!appUsers[currentUser.userKey];
+            checkPinStatus(isExistingUser, isExistingUser ? appUsers[currentUser.userKey].pin : null);
         } catch (e) {
             localStorage.removeItem('currentUser');
         }
